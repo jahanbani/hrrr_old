@@ -1,3 +1,4 @@
+import pandas as pd
 # Map state abbreviations to state name
 abv2state = {
     "AK": "Alaska",
@@ -63,3 +64,14 @@ SELECTORS = {
     # "vdd": "Visible Diffuse Downward Solar Flux",
     # "2tmp": "2 metre temperature",
 }
+
+# OUTDIR = "../psse/grg-pssedata/"
+OUTDIR = "./"
+
+# study year; which year to study
+YEAR = 2020
+DIR = r"/research/alij/"
+START = pd.to_datetime("2019-12-30 00:00")
+END = pd.to_datetime("2021-01-05 01:00")
+POINTSFN = "../psse/InputData/In_dut_80m_Iowa_Wind_Turbines.csv"
+SEARCHSTRING = "V[B,D]DSF|DSWRF|TMP:2 m|(?:U|V)GRD:(?:10|80) m"
