@@ -16,7 +16,8 @@ from prereise.gather.winddata.power_curves import (
     get_turbine_power_curves,
     shift_turbine_curve,
 )
-
+import datetime
+import pygrib
 
 def log_error(e, filename, hours_forecasted="0", message="in something"):
     """logging error"""
@@ -299,3 +300,48 @@ def extract_data(
         raise
 
     return data
+
+
+import concurrent.futures
+
+def extract_data_parallel(points, start_dt, end_dt, directory, hours_forecasted, SELECTORS):
+    wind_data_lat_long = get_wind_data_lat_long(start_dt, directory)
+    wind_farm_to_closest_wind_grid_indices = find_closest_wind_grids(points, wind_data_lat_long)
+    dts = pd.date_range(start=start_dt, end=end_dt, freq="15T")
+    data = {SELK: pd.DataFrame(index=dts, columns=points.index, dtype=float) for SELK in SELECTORS}
+
+    fns = pd.date_range(start=start_dt, end=end_dt, freq="1H")
+    
+    def process_time_slice(dt):
+        fn = os.path.join(directory, formatted_filename(dt, hours_forecasted=hours_forecasted))
+        print(f"Reading {fn}")
+        try:
+            gribs = pygrib.open(fn)
+            for SELK, SELV in SELECTORS.items():
+                try:
+                    for u in gribs.select(name=SELV):
+                        data_key = dt + datetime.timedelta(minutes=int(u.validityTime))
+                        data[SELK].loc[data_key] = u.values.flatten()[wind_farm_to_closest_wind_grid_indices]
+                except Exception as e:
+                    log_error(e, formatted_filename(dt, hours_forecasted=hours_forecasted), message="in reading the files")
+                    for i in range(0, 60, 15):
+                        data_key = dt + datetime.timedelta(minutes=i)
+                        data[SELK].loc[data_key] = np.nan
+        except Exception as e:
+            log_error(e, formatted_filename(dt, hours_forecasted=hours_forecasted), message="in opening the files")
+            print(f"Grib file {dt} not found")
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(process_time_slice, fns)
+    
+    for k, v in data.items():
+        data[k] = linear(v.sort_index(), inplace=False)
+        data[k].columns = points["Bus"]
+
+    if "UWind80" in data.keys() and "VWind80" in data.keys():
+        data["Wind80"] = np.sqrt(pow(data["UWind80"], 2) + pow(data["VWind80"], 2))
+    if "UWind10" in data.keys() and "VWind10" in data.keys():
+        data["Wind10"] = np.sqrt(pow(data["UWind10"], 2) + pow(data["VWind10"], 2))
+
+    return data
+

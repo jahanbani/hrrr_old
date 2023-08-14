@@ -1,10 +1,19 @@
 import time
-from herbie import Herbie
+
+# from herbie import Herbie
 from herbie.fast import FastHerbie
 import concurrent.futures
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import Bing, Photon
 import pandas as pd
+from prereise.gather.winddata.hrrr.newcalculations import (
+    extract_data,
+    extract_data_parallel,
+)
+import numpy as np
+import PySAM.Pvwattsv8 as PVWatts
+import PySAM.PySSC as pssc  # noqa: N813
+import PySAM.ResourceTools as RT
 
 geolocator = Photon(user_agent="geoapiExercises")
 
@@ -41,8 +50,7 @@ def get_states(df):
         with concurrent.futures.ThreadPoolExecutor() as executor:
             try:
                 states = list(
-                    executor.map(get_location_by_coordinates,
-                                 df["lat"], df["lon"])
+                    executor.map(get_location_by_coordinates, df["lat"], df["lon"])
                 )
                 df["state"] = states
             except Exception as e:
@@ -57,10 +65,10 @@ def get_states(df):
     return df
 
 
-def read_data(points, START, END, DATADIR, DEFAULT_HOURS_FORECASTED, SELECTORS):
+def read_data(points, START, END, DATADIR, SELECTORS):
     dataall = {}
     for inx, DEFAULT_HOURS_FORECASTED in enumerate(["0", "1"]):
-        data = extract_data(
+        data = extract_data_parallel(
             points,
             START,
             END,
@@ -84,14 +92,38 @@ def read_data(points, START, END, DATADIR, DEFAULT_HOURS_FORECASTED, SELECTORS):
         return data
 
 
-def get_points(fn):
-    # wind
-    # offshore project data
+def get_points(csv_filepath):
+    """
+    Read latitude, longitude, and plant type information from a CSV file and
+    return a DataFrame containing unique points for wind farms and solar plants.
+
+    :param str csv_filepath: File path of the CSV containing point information.
+    :return: (*pandas.DataFrame*) -- Data frame containing unique points for
+        wind farms and solar plants, including columns 'Bus', 'lat', and 'lon'.
+    """
+    # Read data from the CSV file
+    columns_to_read = ["Bus", "lat", "lon", "Wind", "Solar"]
+    latlon_data = pd.read_csv(csv_filepath, usecols=columns_to_read)
+
+    # Filter out rows with missing lat/lon values
+    latlon_data = latlon_data.dropna(subset=["lat", "lon"])
+
+    # Separate wind farms and solar plants
+    wind_farms = latlon_data[latlon_data["Wind"] == 1]
+    solar_plants = latlon_data[latlon_data["Solar"] == 1]
+
+    # Combine wind farms and solar plants, drop duplicates
+    points_combined = pd.concat([wind_farms, solar_plants], ignore_index=True)
+    unique_points = points_combined.drop_duplicates(subset=["lat", "lon"])
+
+    return unique_points, wind_farms, solar_plants
+
+
+def get_points_old(fn):
     colslatlons = ["Bus", "lat", "lon", "Wind", "Solar"]
     latlons = pd.read_csv(fn)[colslatlons]
 
-    latlons = latlons.loc[(~(latlons["lat"].isna()) & ~
-                           (latlons["lon"].isna())), :]
+    latlons = latlons.loc[(~(latlons["lat"].isna()) & ~(latlons["lon"].isna())), :]
     wind_farms = latlons.loc[latlons["Wind"] == 1, :]
     solar_plantx = latlons.loc[latlons["Solar"] == 1, :]
 
@@ -105,28 +137,32 @@ def get_points(fn):
     return points
 
 
-def prepare_wind(wind_farms):
-    # wind_farms = pd.read_excel("In_windsolarlocations.xlsx")
+def osw_model(wind_farms):
     if "Offshore" in wind_farms.columns:
-        wind_farms.loc[
-            wind_farms["Offshore"] == 0,
-            ["Predominant Turbine Model Number",
-                "Predominant Turbine Manufacturer"],
-        ] = "IEC class 2"
+        """add wind turbine manufacturer and model number for the offshore"""
+
         wind_farms.loc[
             wind_farms["Offshore"] == 1, "Predominant Turbine Model Number"
         ] = "V236"
         wind_farms.loc[
             wind_farms["Offshore"] == 1, "Predominant Turbine Manufacturer"
         ] = "Vestas"
-    if "Turbine Hub Height (Feet)" not in wind_farms.columns:
-        # height in feet why?
-        wind_farms.loc[:, "Turbine Hub Height (Feet)"] = 262.467
-    # if offshore, set tthe Predominant Turbine Model Number to V236 and Predominant Turbine Manufacturer to Vestas
+
     return wind_farms
 
 
-def prepare_solar(solar_plantx):
+def prepare_wind(wind_farms):
+    """prepare the wind data to be used in the power calculation"""
+
+    wind_farms = osw_model(wind_farms)
+    if "Turbine Hub Height (Feet)" not in wind_farms.columns:
+        # height in feet why?
+        wind_farms.loc[:, "Turbine Hub Height (Feet)"] = 262.467
+
+    return wind_farms
+
+
+def prepare_solar(solar_plantx, abv2state):
     """prepare the solar data to be used in the power calculation"""
 
     t1 = time.time()
@@ -140,8 +176,7 @@ def prepare_solar(solar_plantx):
 
     solar_plant = pd.merge(
         df,
-        pd.DataFrame({"state": abv2state.values(),
-                     "state_abv": abv2state.keys()}),
+        pd.DataFrame({"state": abv2state.values(), "state_abv": abv2state.keys()}),
         on="state",
         how="left",
     ).rename(columns={"state": "interconnect"})
@@ -156,10 +191,9 @@ def prepare_solar(solar_plantx):
     return solar_plant
 
 
-def download_data(START, END, DATADIR):  # Create a range of dates
+def download_data(START, END, DATADIR, SEARCHSTRING):
+    # Create a range of dates
     FHDATES = pd.date_range(
-        # start="2019-12-30 00:00",
-        # end="2021-01-05 01:00",
         start=START,
         end=END,
         freq="1H",
@@ -175,30 +209,8 @@ def download_data(START, END, DATADIR):  # Create a range of dates
         save_dir=DATADIR,
     )
     print("downloading")
-
     FH.download(
-        # wind and everything for solar
         searchString=SEARCHSTRING,
-        # wind only
-        # searchString="(?:U|V)GRD:80 m",
-        # solar only
-        # searchString="V[B,D]DSF|DSWRF|TMP:2 m|(?:U|V)GRD:10 m",
-        save_dir=DATADIR,
-        max_threads=200,
-        verbose=True,
-    )
-        save_dir=DATADIR,
-        max_threads=200,
-        verbose=True,
-    )
-        save_dir=DATADIR,
-        max_threads=200,
-        verbose=True,
-    )
-        save_dir=DATADIR,
-        max_threads=200,
-        verbose=True,
-    )
         save_dir=DATADIR,
         max_threads=200,
         verbose=True,

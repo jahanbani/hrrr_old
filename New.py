@@ -5,16 +5,7 @@ However, if we don't change this it seems that there are
 two files that are being downloaded, why?
 It is located in /local/alij/anaconda3/envs/herbie/lib/python3.11/site-packages/herbie
 """
-from datetime import datetime
-
 # I need to calculate the solar output here
-import ipdb
-import numpy as np
-import time
-import pandas as pd
-import PySAM.Pvwattsv8 as PVWatts
-import PySAM.PySSC as pssc  # noqa: N813
-import PySAM.ResourceTools as RT
 from IPython import embed
 from powersimdata.input.grid import Grid
 from prereise.gather.const import (
@@ -30,22 +21,18 @@ from prereise.gather.const import (
 )
 from prereise.gather.solardata.helpers import to_reise
 from prereise.gather.solardata.nsrdb import naive
-from prereise.gather.solardata.nsrdb.sam import (
-    retrieve_data_blended,
-    retrieve_data_individual,
-    retrieve_data_individual_ali,
-    retrieve_data_individual_orig,
-)
-from prereise.gather.winddata.hrrr.calculations import (
-    calculate_pout_individual,
-    extract_data,
-)
+# from prereise.gather.solardata.nsrdb.sam import (
+#     retrieve_data_blended,
+#     retrieve_data_individual,
+#     retrieve_data_individual_ali,
+#     retrieve_data_individual_orig,
+# )
 from prereise.gather.winddata.hrrr.hrrr import retrieve_data
 from tqdm import tqdm
 import utils
 
 
-points = utils.get_points(POINTSFN)
-data = read_data()
+points, wind_farms, solar_plants = utils.get_points(POINTSFN)
+data = utils.read_data(points, START, END, DATADIR, SELECTORS)
 
 __import__("ipdb").set_trace()
