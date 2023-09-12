@@ -72,8 +72,8 @@ OUTDIR = "./"
 # study year; which year to study
 YEAR = 2020
 DATADIR = r"/research/alij/"
-START = pd.to_datetime("2019-12-31 01:00")
-END = pd.to_datetime("2021-01-02 00:00")
+START = pd.to_datetime("2018-12-31 01:00")
+END = pd.to_datetime("2020-01-02 00:00")
 POINTSFN = "../psse/InputData/In_Iowa_Wind_Turbines.xlsx"
 SEARCHSTRING = "V[B,D]DSF|DSWRF|TMP:2 m|(?:U|V)GRD:(?:10|80) m"
 TZ = 6

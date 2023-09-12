@@ -1,5 +1,6 @@
 
 import concurrent.futures
+import time
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,108 @@ from prereise.gather.winddata.hrrr.calculations import (
     calculate_pout_individual, extract_data, extract_data_parallel)
 
 geolocator = Photon(user_agent="geoapiExercises")
+
+
+def prepare_calculate_solar_power(
+    solar_wind_speed_data, solar_tmp_data, solar_vdd_data, solar_vbd_data, solar_plant, YEAR
+):
+    # replace engative values with zero
+    solar_wind_speed_data[solar_wind_speed_data < 0] = 0
+    solar_vdd_data[solar_vdd_data < 0] = 0
+    solar_vbd_data[solar_vbd_data < 0] = 0
+    solar_tmp_data[solar_tmp_data < 0] = 0
+
+    solar_data_all = {
+        "wspd": solar_wind_speed_data,
+        "df": solar_vdd_data,
+        "dn": solar_vbd_data,
+        "tdry": solar_tmp_data - 273.15,
+    }
+    df = pd.concat(solar_data_all.values(), keys=solar_data_all.keys())
+    latlon = solar_plant.loc[:, ["Bus", "lat", "lon"]].loc[:10, :]
+
+    dfsa = {}
+    for (inx, lat, lon) in latlon.values:
+        print(f"for index {inx}")
+        dfs = df[[inx]].unstack(0)[inx]
+
+        # shift 6 hours UTC to CST XXX NOTE THIS needs to be changed for EST
+        dfs = dfs.shift(periods=-5)
+        dfs.loc[:, "year"] = dfs.index.year
+        dfs.loc[:, "month"] = dfs.index.month
+        dfs.loc[:, "day"] = dfs.index.day
+        dfs.loc[:, "hour"] = dfs.index.hour
+        dfs.loc[:, "minute"] = dfs.index.minute
+        dfs = dfs.loc[dfs.index.year == YEAR, :]
+        dfs.loc[dfs["df"] > 1000, "df"] = 1000
+        dfs.loc[dfs["dn"] > 1000, "dn"] = 1000
+        dfs = dfs.reset_index(drop=True).fillna(method="ffill")
+        dfsd = dfs.to_dict(orient="list")
+        dfsd["lat"] = lat
+        dfsd["lon"] = lon
+        dfsd["tz"] = -5
+        dfsd["elev"] = 898
+
+        dfsa[inx] = dfsd
+        if dfs.isnull().values.any():
+            print(f"{lat} and {lon} at {inx} has NaN")
+
+    default_pv_parameters = {
+        "adjust:constant": 0,
+        "azimuth": 180,
+        "gcr": 0.4,
+        "inv_eff": 94,
+        "losses": 14,
+        "tilt": 30,
+    }
+    ilr = 1.25
+
+    plant_pv_dict = {
+        "system_capacity": ilr,
+        "dc_ac_ratio": ilr,
+        "array_type": 1,
+    }
+
+    pv_dict = {**default_pv_parameters, **plant_pv_dict}
+
+    dff = {}
+    for k, dfd in dfsa.items():
+        print(f"calculate power for solar plant number {k}")
+        power = calculate_solar_power(dfd, pv_dict)
+        dff[k] = pd.DataFrame(power).rename(columns={0: k})
+        # print(dff[k].loc[dff[k][k] > 0])
+        if dff[k].loc[dff[k][k] > 0].empty:
+            print(f"output of {k} is all zeros")
+        if dff[k].loc[dff[k][k] > 0].max().values > 1:
+            print(f"output of {k} is greater than zero")
+
+    dfl = []
+    for k, df in dff.items():
+        dfl.append(df)
+
+    dfindex = pd.date_range(
+        start=str(YEAR) + "-01-01 00:00",
+        end=str(YEAR + 1) + "-01-01 00:00",
+        freq="15T",
+        inclusive="left",
+    )
+
+    leapdfindex = dfindex[((dfindex.month == 2) & (dfindex.day == 29))]
+    dfindex = dfindex[~((dfindex.month == 2) & (dfindex.day == 29))]
+    df = pd.concat(dfl, axis=1)
+    df.index = dfindex
+
+    # 2020 is leap year; add data for 29th of Feb.
+    if YEAR == 2020:
+        leapdata = df.loc[((df.index.month == 2) & (df.index.day == 28))]
+        leapdata.index = leapdfindex
+        df = pd.concat([df, leapdata], axis=0).sort_index(axis=0)
+
+    # df.round(3).to_csv( SOLAR_OUTPUT_FILE,)
+    # convert the columns to strings
+    df.columns = df.columns.astype(str)
+    df.to_parquet('solar_output_power' + ".parquet")
+    return df
 
 
 def calculate_wind_pout(wind_speed_data, wind_farms, START, END, TZ):

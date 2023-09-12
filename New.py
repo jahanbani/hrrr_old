@@ -12,12 +12,12 @@ import pandas as pd
 
 import utils
 from prereise.gather.const import (DATADIR, END, POINTSFN,  # OUTDIR,; YEAR,
-                                   SEARCHSTRING, SELECTORS, START, TZ,
+                                   SEARCHSTRING, SELECTORS, START, TZ, YEAR,
                                    abv2state)
 
 # utils.download_data(START, END, DATADIR, SEARCHSTRING)
 points, wind_farms, solar_plants = utils.get_points(POINTSFN)
-# data = utils.read_data(points, START, END, DATADIR, SELECTORS)
+data = utils.read_data(points, START, END, DATADIR, SELECTORS)
 
 # Replace with the actual path to your folder
 folder_path = "./"
@@ -34,5 +34,19 @@ for FN in parquet_files:
 print('read the data successfully')
 
 # convert the wind speed dat to wind_farms
-df = utils.calculate_wind_pout(data['Wind80'], points, START, END, TZ).round(2)
+wind_output_power = utils.calculate_wind_pout(
+    data['Wind80'], wind_farms, START, END, TZ).round(2)
+
+
+# solar part
+solar_output_power = utils.prepare_calculate_solar_power(
+    data['Wind10'],
+    data['2tmp'],
+    data['vdd'],
+    data['vbd'],
+    solar_plants,
+    YEAR,
+)
+
+
 __import__("ipdb").set_trace()
